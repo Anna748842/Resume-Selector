@@ -8,5 +8,8 @@
     "install:all": "npm install --prefix client && npm install --prefix server",
     "predeploy": "npm run build --prefix client",
     "deploy": "gh-pages -d client/dist"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
   }
 }
