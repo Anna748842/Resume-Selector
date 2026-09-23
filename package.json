@@ -1,0 +1,12 @@
+{
+  "name": "resume-scanning-app",
+  "private": true,
+  "version": "0.0.0",
+  "homepage": "https://Anna748842.github.io/Resume-Selector",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "install:all": "npm install --prefix client && npm install --prefix server",
+    "predeploy": "npm run build --prefix client",
+    "deploy": "gh-pages -d client/dist"
+  }
+}
