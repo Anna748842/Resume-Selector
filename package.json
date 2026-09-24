@@ -8,8 +8,7 @@
     "server": "node server/server.js",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "build": "npm --prefix client run build",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d client/dist"
+    "deploy": "npm run build && node scripts/deploy-gh-pages.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
