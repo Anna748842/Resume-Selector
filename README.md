@@ -27,7 +27,7 @@ A resume screening dashboard for comparing candidate resumes against job require
 
 This project is configured for GitHub Pages with the repository URL:
 
-https://Anna748842.github.io/Resume-Selector/
+https://anna748842.github.io/Resume-Selector/
 
 Build and deploy:
 
