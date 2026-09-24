@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "homepage": "https://Anna748842.github.io/Resume-Selector",
   "scripts": {
-    "start": "node scripts/start.js",
-    "install:all": "npm install --prefix client && npm install --prefix server",
-    "predeploy": "npm run build --prefix client",
+    "client": "npm --prefix client run dev",
+    "server": "node server/server.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "npm --prefix client run build",
+    "predeploy": "npm run build",
     "deploy": "gh-pages -d client/dist"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
     "gh-pages": "^6.3.0"
   }
 }

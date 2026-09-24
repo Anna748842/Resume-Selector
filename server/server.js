@@ -20,10 +20,25 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+const allowedOrigins = new Set([
+  CLIENT_URL,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:3000",
+  "https://Anna748842.github.io"
+]);
 
 app.use(
   cors({
-    origin: CLIENT_URL
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, true);
+    },
+    credentials: true
   })
 );
 

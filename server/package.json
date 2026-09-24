@@ -2,9 +2,12 @@
   "name": "resume-screening-server",
   "version": "1.0.0",
   "main": "server.js",
+  "homepage": "https://Anna748842.github.io/Resume-Selector/",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d client/dist"
   },
   "dependencies": {
     "cors": "^2.8.5",

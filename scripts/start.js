@@ -28,38 +28,63 @@ function ensureMongoDataDir() {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
+function findMongoExecutable() {
+  const candidates = [
+    'C:/Program Files/MongoDB/Server/8.3/bin/mongod.exe',
+    'C:/Program Files/MongoDB/Server/8.2/bin/mongod.exe',
+    'C:/Program Files/MongoDB/Server/7.0/bin/mongod.exe',
+    'C:/Program Files/MongoDB/Server/6.0/bin/mongod.exe',
+    'mongod'
+  ];
+
+  return candidates.find((candidate) => {
+    if (candidate === 'mongod') {
+      return true;
+    }
+
+    return fs.existsSync(candidate);
+  });
+}
+
 async function start() {
   try {
     ensureMongoDataDir();
 
-    const mongoExecutable = 'C:/Program Files/MongoDB/Server/8.3/bin/mongod.exe';
-    const mongoExists = fs.existsSync(mongoExecutable);
+    const mongoExecutable = findMongoExecutable();
 
-    if (mongoExists) {
-      const mongo = spawn(mongoExecutable, [
-        '--dbpath', 'C:/data/db',
-        '--logpath', 'C:/data/mongodb.log',
-        '--bind_ip', '127.0.0.1'
-      ], { stdio: 'ignore', detached: true });
+    if (mongoExecutable) {
+      const mongoArgs = mongoExecutable === 'mongod'
+        ? ['--dbpath', 'C:/data/db', '--logpath', 'C:/data/mongodb.log', '--bind_ip', '127.0.0.1']
+        : [
+            '--dbpath', 'C:/data/db',
+            '--logpath', 'C:/data/mongodb.log',
+            '--bind_ip', '127.0.0.1'
+          ];
+
+      const mongo = spawn(mongoExecutable, mongoArgs, {
+        stdio: 'ignore',
+        detached: true,
+        shell: process.platform === 'win32' && mongoExecutable !== 'mongod'
+      });
 
       mongo.unref();
       console.log('MongoDB started on localhost');
     } else {
-      console.log('MongoDB executable not found at default install path. Please ensure MongoDB is installed.');
+      console.log('MongoDB executable not found. Please ensure MongoDB is installed and available on PATH.');
     }
 
     console.log('Starting backend...');
-    const backend = spawn('npm.cmd', ['run', 'start'], {
+    const backend = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'start'], {
       cwd: serverDir,
       stdio: 'inherit',
-      shell: true,
+      shell: process.platform === 'win32'
     });
 
     console.log('Starting frontend...');
-    const frontend = spawn('npm.cmd', ['run', 'dev', '--', '--host', '0.0.0.0'], {
+    const frontend = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev', '--', '--host', '0.0.0.0'], {
       cwd: clientDir,
       stdio: 'inherit',
-      shell: true,
+      shell: process.platform === 'win32'
     });
 
     backend.on('exit', (code) => {
