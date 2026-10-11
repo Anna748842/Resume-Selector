@@ -1,7 +1,78 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import {
+  db,
+  firebaseReady,
+  collection,
+  getDocs,
+  addDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp
+} from "./firebase";
+import { extractTextFromPdf, screenResume, extractSkills } from "./utils/screenResume";
 
 /* ── API base URL ── */
 const API_BASE = import.meta.env.VITE_API_URL || "";
+
+// LocalStorage keys for instant fallback if neither backend nor Firestore is reachable
+const STORAGE_JOBS_KEY = "shortlistai_jobs";
+const STORAGE_CANDIDATES_KEY = "shortlistai_candidates";
+
+function getLocalJobs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_JOBS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalJobs(jobs) {
+  try {
+    localStorage.setItem(STORAGE_JOBS_KEY, JSON.stringify(jobs));
+  } catch {}
+}
+
+function getLocalCandidates(jobId) {
+  try {
+    const raw = localStorage.getItem(STORAGE_CANDIDATES_KEY);
+    const all = raw ? JSON.parse(raw) : [];
+    return all.filter((c) => c.job === jobId).sort((a, b) => b.score - a.score);
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalCandidate(candidate) {
+  try {
+    const raw = localStorage.getItem(STORAGE_CANDIDATES_KEY);
+    const all = raw ? JSON.parse(raw) : [];
+    all.push(candidate);
+    localStorage.setItem(STORAGE_CANDIDATES_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+function updateLocalCandidateStatus(candidateId, status) {
+  try {
+    const raw = localStorage.getItem(STORAGE_CANDIDATES_KEY);
+    let all = raw ? JSON.parse(raw) : [];
+    all = all.map((c) => (c._id === candidateId ? { ...c, status } : c));
+    localStorage.setItem(STORAGE_CANDIDATES_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+function deleteLocalCandidate(candidateId) {
+  try {
+    const raw = localStorage.getItem(STORAGE_CANDIDATES_KEY);
+    let all = raw ? JSON.parse(raw) : [];
+    all = all.filter((c) => c._id !== candidateId);
+    localStorage.setItem(STORAGE_CANDIDATES_KEY, JSON.stringify(all));
+  } catch {}
+}
 
 const initialJobForm = {
   title: "",
@@ -49,11 +120,19 @@ function useReveal() {
 
   useEffect(() => {
     const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (prefersReduced) { setVisible(true); return; }
+    if (prefersReduced) {
+      setVisible(true);
+      return;
+    }
     const el = ref.current;
     if (!el) return;
     const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
       { threshold: 0.15 }
     );
     obs.observe(el);
@@ -74,10 +153,20 @@ function ScoreRing({ score, size = 76, stroke = 6 }) {
     <svg width={size} height={size} className="score-ring-svg" role="img" aria-label={`Match score: ${score}%`}>
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--line)" strokeWidth={stroke} />
       <circle
-        cx={size / 2} cy={size / 2} r={r} fill="none"
-        stroke={color} strokeWidth={stroke}
-        strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset}
-        style={{ transition: "stroke-dashoffset 0.8s cubic-bezier(.4,0,.2,1)", transform: "rotate(-90deg)", transformOrigin: "center" }}
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        style={{
+          transition: "stroke-dashoffset 0.8s cubic-bezier(.4,0,.2,1)",
+          transform: "rotate(-90deg)",
+          transformOrigin: "center"
+        }}
       />
       <text x="50%" y="46%" dominantBaseline="central" textAnchor="middle" className="score-ring-value" fill="var(--ink)">
         {score}%
@@ -161,41 +250,105 @@ function App() {
   const [error, setError] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const clearAlerts = useCallback(() => { setMessage(""); setError(""); }, []);
+  const clearAlerts = useCallback(() => {
+    setMessage("");
+    setError("");
+  }, []);
 
   /* ── Data loading ── */
   async function loadJobs() {
     setLoadingJobs(true);
+    // 1. Try Express Backend API
     try {
       const response = await fetch(`${API_BASE}/api/jobs`);
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setJobs(data.jobs);
-      if (!selectedJob && data.jobs.length > 0) setSelectedJob(data.jobs[0]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoadingJobs(false);
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success && Array.isArray(data.jobs)) {
+          setJobs(data.jobs);
+          if (!selectedJob && data.jobs.length > 0) setSelectedJob(data.jobs[0]);
+          setLoadingJobs(false);
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Try Firebase Firestore
+    if (firebaseReady) {
+      try {
+        const jobsCol = collection(db, "jobs");
+        const q = query(jobsCol, orderBy("createdAt", "desc"));
+        const snapshot = await getDocs(q);
+        const fbJobs = snapshot.docs.map((d) => ({
+          _id: d.id,
+          ...d.data()
+        }));
+        if (fbJobs.length > 0) {
+          setJobs(fbJobs);
+          if (!selectedJob) setSelectedJob(fbJobs[0]);
+          setLoadingJobs(false);
+          return;
+        }
+      } catch (fbErr) {
+        console.warn("Firestore jobs fetch failed:", fbErr);
+      }
     }
+
+    // 3. Fallback to LocalStorage
+    const local = getLocalJobs();
+    setJobs(local);
+    if (!selectedJob && local.length > 0) setSelectedJob(local[0]);
+    setLoadingJobs(false);
   }
 
   async function loadCandidates(jobId) {
+    if (!jobId) return;
     setLoadingCandidates(true);
+
+    // 1. Try Express Backend API
     try {
       const response = await fetch(`${API_BASE}/api/jobs/${jobId}/candidates`);
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setCandidates(data.candidates);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoadingCandidates(false);
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success && Array.isArray(data.candidates)) {
+          setCandidates(data.candidates);
+          setLoadingCandidates(false);
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Try Firebase Firestore
+    if (firebaseReady) {
+      try {
+        const candCol = collection(db, "candidates");
+        const q = query(candCol, where("job", "==", jobId));
+        const snapshot = await getDocs(q);
+        const fbCandidates = snapshot.docs
+          .map((d) => ({
+            _id: d.id,
+            ...d.data()
+          }))
+          .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+        setCandidates(fbCandidates);
+        setLoadingCandidates(false);
+        return;
+      } catch (fbErr) {
+        console.warn("Firestore candidates fetch failed:", fbErr);
+      }
     }
+
+    // 3. Fallback to LocalStorage
+    const local = getLocalCandidates(jobId);
+    setCandidates(local);
+    setLoadingCandidates(false);
   }
 
-  useEffect(() => { loadJobs(); }, []);
+  useEffect(() => {
+    loadJobs();
+  }, []);
 
   useEffect(() => {
     if (selectedJob?._id) loadCandidates(selectedJob._id);
@@ -212,39 +365,88 @@ function App() {
     setCandidateForm((c) => ({ ...c, [name]: files ? files[0] : value }));
   }
 
+  function parseSkillsInput(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.map((s) => s.trim()).filter(Boolean);
+    return value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
   async function createJob(event) {
     event.preventDefault();
     setError("");
     setMessage("");
     setIsCreatingJob(true);
 
+    // 1. Try Express Backend API
     try {
       const response = await fetch(`${API_BASE}/api/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jobForm)
       });
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setJobs((current) => [data.job, ...current]);
-      setSelectedJob(data.job);
-      setJobForm(initialJobForm);
-      setMessage("Job created successfully.");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsCreatingJob(false);
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success && data.job) {
+          setJobs((current) => [data.job, ...current]);
+          setSelectedJob(data.job);
+          setJobForm(initialJobForm);
+          setMessage("Job created successfully.");
+          setIsCreatingJob(false);
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Fallback to Firebase or LocalStorage
+    const manualSkills = parseSkillsInput(jobForm.requiredSkills);
+    const detectedSkills =
+      manualSkills.length > 0 ? manualSkills : extractSkills(jobForm.description);
+
+    let newJob = {
+      title: jobForm.title,
+      description: jobForm.description,
+      requiredSkills: detectedSkills,
+      createdAt: new Date().toISOString()
+    };
+
+    if (firebaseReady) {
+      try {
+        const docRef = await addDoc(collection(db, "jobs"), {
+          ...newJob,
+          createdAt: serverTimestamp()
+        });
+        newJob._id = docRef.id;
+      } catch (fbErr) {
+        console.warn("Firestore addJob failed, saving locally:", fbErr);
+        newJob._id = "job_" + Date.now();
+      }
+    } else {
+      newJob._id = "job_" + Date.now();
     }
+
+    const updatedJobs = [newJob, ...jobs];
+    setJobs(updatedJobs);
+    saveLocalJobs(updatedJobs);
+    setSelectedJob(newJob);
+    setJobForm(initialJobForm);
+    setMessage("Job created successfully.");
+    setIsCreatingJob(false);
   }
 
   async function uploadCandidate(event) {
     event.preventDefault();
-    if (!selectedJob) { setError("Select or create a job first."); return; }
+    if (!selectedJob) {
+      setError("Select or create a job first.");
+      return;
+    }
     setError("");
     setMessage("");
     setIsUploading(true);
 
+    const formEl = event.target;
+
+    // 1. Try Express Backend API first
     try {
       const formData = new FormData();
       formData.append("name", candidateForm.name);
@@ -256,49 +458,144 @@ function App() {
         method: "POST",
         body: formData
       });
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setCandidates((current) => [data.candidate, ...current].sort((a, b) => b.score - a.score));
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success && data.candidate) {
+          setCandidates((current) =>
+            [data.candidate, ...current].sort((a, b) => b.score - a.score)
+          );
+          setCandidateForm(initialCandidateForm);
+          formEl.reset();
+          setMessage("Resume screened and candidate added.");
+          setIsUploading(false);
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Client-side screening + Firebase / LocalStorage fallback
+    try {
+      if (!candidateForm.resume) {
+        throw new Error("Please select a PDF resume file.");
+      }
+
+      const resumeText = await extractTextFromPdf(candidateForm.resume);
+      const screening = screenResume(
+        resumeText,
+        selectedJob.requiredSkills,
+        selectedJob.description
+      );
+
+      let newCandidate = {
+        job: selectedJob._id,
+        name: candidateForm.name,
+        email: candidateForm.email,
+        phone: candidateForm.phone,
+        resumeFileName: candidateForm.resume.name,
+        resumeText,
+        score: screening.score,
+        matchedSkills: screening.matchedSkills,
+        missingSkills: screening.missingSkills,
+        status: "New",
+        createdAt: new Date().toISOString()
+      };
+
+      if (firebaseReady) {
+        try {
+          const docRef = await addDoc(collection(db, "candidates"), {
+            ...newCandidate,
+            createdAt: serverTimestamp()
+          });
+          newCandidate._id = docRef.id;
+        } catch (fbErr) {
+          console.warn("Firestore uploadCandidate failed, storing locally:", fbErr);
+          newCandidate._id = "cand_" + Date.now();
+        }
+      } else {
+        newCandidate._id = "cand_" + Date.now();
+      }
+
+      saveLocalCandidate(newCandidate);
+      setCandidates((current) =>
+        [newCandidate, ...current].sort((a, b) => b.score - a.score)
+      );
       setCandidateForm(initialCandidateForm);
-      event.target.reset();
+      formEl.reset();
       setMessage("Resume screened and candidate added.");
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Could not process resume.");
     } finally {
       setIsUploading(false);
     }
   }
 
   async function updateStatus(candidateId, status) {
+    // 1. Try Express Backend API
     try {
       const response = await fetch(`${API_BASE}/api/candidates/${candidateId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status })
       });
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setCandidates((current) =>
-        current.map((c) => (c._id === candidateId ? data.candidate : c))
-      );
-    } catch (err) {
-      setError(err.message);
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success && data.candidate) {
+          setCandidates((current) =>
+            current.map((c) => (c._id === candidateId ? data.candidate : c))
+          );
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Try Firebase Firestore
+    if (firebaseReady) {
+      try {
+        await updateDoc(doc(db, "candidates", candidateId), { status });
+      } catch (fbErr) {
+        console.warn("Firestore updateDoc failed:", fbErr);
+      }
     }
+
+    // 3. Update Local
+    updateLocalCandidateStatus(candidateId, status);
+    setCandidates((current) =>
+      current.map((c) => (c._id === candidateId ? { ...c, status } : c))
+    );
   }
 
   async function deleteCandidate(candidateId) {
     if (!window.confirm("Delete this candidate from the shortlist?")) return;
+
+    // 1. Try Express Backend API
     try {
-      const response = await fetch(`${API_BASE}/api/candidates/${candidateId}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(`Server error (${response.status})`);
-      const data = await response.json();
-      if (!data.success) throw new Error(data.message);
-      setCandidates((current) => current.filter((c) => c._id !== candidateId));
-    } catch (err) {
-      setError(err.message);
+      const response = await fetch(`${API_BASE}/api/candidates/${candidateId}`, {
+        method: "DELETE"
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (data.success) {
+          setCandidates((current) => current.filter((c) => c._id !== candidateId));
+          return;
+        }
+      }
+    } catch {}
+
+    // 2. Try Firebase Firestore
+    if (firebaseReady) {
+      try {
+        await deleteDoc(doc(db, "candidates", candidateId));
+      } catch (fbErr) {
+        console.warn("Firestore deleteDoc failed:", fbErr);
+      }
     }
+
+    // 3. Update Local
+    deleteLocalCandidate(candidateId);
+    setCandidates((current) => current.filter((c) => c._id !== candidateId));
   }
 
   /* ── Derived stats ── */
@@ -309,7 +606,7 @@ function App() {
     const averageScore =
       candidates.length === 0
         ? 0
-        : Math.round(candidates.reduce((t, c) => t + c.score, 0) / candidates.length);
+        : Math.round(candidates.reduce((t, c) => t + (c.score || 0), 0) / candidates.length);
     return { total: candidates.length, shortlisted, averageScore };
   }, [candidates]);
 
@@ -349,8 +646,7 @@ function App() {
           <p className="eyebrow">Recruiting operations</p>
           <h1>Find the strongest candidates before the first&nbsp;interview.</h1>
           <p className="hero-copy">
-            Create a role, upload PDF resumes, and get transparent
-            skill&#8209;match scores in&nbsp;seconds.
+            Create a role, upload PDF resumes, and get transparent skill&#8209;match scores in&nbsp;seconds.
           </p>
         </div>
 
@@ -396,12 +692,15 @@ function App() {
                   <button
                     className={selectedJob?._id === job._id ? "job-card active" : "job-card"}
                     key={job._id}
-                    onClick={() => { setSelectedJob(job); setMobileMenuOpen(false); }}
+                    onClick={() => {
+                      setSelectedJob(job);
+                      setMobileMenuOpen(false);
+                    }}
                     role="option"
                     aria-selected={selectedJob?._id === job._id}
                   >
                     <span className="job-card-title">{job.title}</span>
-                    <span className="job-card-meta">{job.requiredSkills.length} skills tracked</span>
+                    <span className="job-card-meta">{job.requiredSkills ? job.requiredSkills.length : 0} skills tracked</span>
                   </button>
                 ))}
                 {jobs.length === 0 && (
@@ -476,7 +775,7 @@ function App() {
               <h2>{selectedJob?.title || "Select a job"}</h2>
               {selectedJob && (
                 <div className="skill-row" aria-label="Required skills">
-                  {selectedJob.requiredSkills.map((skill) => (
+                  {(selectedJob.requiredSkills || []).map((skill) => (
                     <span className="skill-chip" key={skill}>{skill}</span>
                   ))}
                 </div>
@@ -601,14 +900,14 @@ function App() {
                     >
                       <div className="candidate-main">
                         <div className="avatar" aria-hidden="true">
-                          {candidate.name.charAt(0).toUpperCase()}
+                          {(candidate.name || "C").charAt(0).toUpperCase()}
                         </div>
 
                         <div className="candidate-info">
                           <div className="candidate-title-row">
                             <h3>{candidate.name}</h3>
-                            <span className={`status ${candidate.status.toLowerCase()}`}>
-                              {candidate.status}
+                            <span className={`status ${(candidate.status || "new").toLowerCase()}`}>
+                              {candidate.status || "New"}
                             </span>
                           </div>
                           <p>{candidate.email}</p>
@@ -624,14 +923,14 @@ function App() {
                       </div>
 
                       <div className="match-score">
-                        <ScoreRing score={candidate.score} />
+                        <ScoreRing score={candidate.score || 0} />
                       </div>
 
                       <div className="candidate-skills">
                         <div>
                           <span className="skill-label">Matched</span>
                           <div className="skill-row">
-                            {candidate.matchedSkills.length > 0 ? (
+                            {candidate.matchedSkills && candidate.matchedSkills.length > 0 ? (
                               candidate.matchedSkills.map((skill) => (
                                 <span className="skill-chip matched" key={skill}>{skill}</span>
                               ))
@@ -643,7 +942,7 @@ function App() {
                         <div>
                           <span className="skill-label">Missing</span>
                           <div className="skill-row">
-                            {candidate.missingSkills.length > 0 ? (
+                            {candidate.missingSkills && candidate.missingSkills.length > 0 ? (
                               candidate.missingSkills.map((skill) => (
                                 <span className="skill-chip missing" key={skill}>{skill}</span>
                               ))
@@ -657,7 +956,7 @@ function App() {
                       <div className="candidate-actions">
                         <div className="select-wrapper">
                           <select
-                            value={candidate.status}
+                            value={candidate.status || "New"}
                             onChange={(e) => updateStatus(candidate._id, e.target.value)}
                             aria-label={`Status for ${candidate.name}`}
                           >
