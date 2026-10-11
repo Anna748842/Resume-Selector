@@ -65,6 +65,12 @@ try {
 
   fs.writeFileSync(path.join(worktreeDir, ".nojekyll"), "");
 
+  // Copy index.html as 404.html for SPA routing on GitHub Pages
+  const indexPath = path.join(worktreeDir, "index.html");
+  if (fs.existsSync(indexPath)) {
+    fs.copyFileSync(indexPath, path.join(worktreeDir, "404.html"));
+  }
+
   run(`git -C "${worktreeDir}" add -A`);
   run(`git -C "${worktreeDir}" status --short`);
 

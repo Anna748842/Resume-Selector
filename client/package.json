@@ -1,12 +1,15 @@
 {
   "name": "resume-screening-client",
   "private": true,
+  "homepage": "https://Anna748842.github.io/Resume-Selector",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview" ,
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "firebase": "^11.3.0",

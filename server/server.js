@@ -277,6 +277,15 @@ app.use((error, req, res, next) => {
   });
 });
 
+// Serve static frontend in production
+const clientDist = path.resolve(__dirname, "..", "client", "dist");
+if (process.env.NODE_ENV === "production") {
+  app.use(express.static(clientDist));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(clientDist, "index.html"));
+  });
+}
+
 async function startServer() {
   try {
     await mongoose.connect(process.env.MONGO_URI);

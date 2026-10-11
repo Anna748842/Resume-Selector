@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 
+/* ── API base URL ── */
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 const initialJobForm = {
   title: "",
   description: "",
@@ -164,7 +167,8 @@ function App() {
   async function loadJobs() {
     setLoadingJobs(true);
     try {
-      const response = await fetch("/api/jobs");
+      const response = await fetch(`${API_BASE}/api/jobs`);
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setJobs(data.jobs);
@@ -179,7 +183,8 @@ function App() {
   async function loadCandidates(jobId) {
     setLoadingCandidates(true);
     try {
-      const response = await fetch(`/api/jobs/${jobId}/candidates`);
+      const response = await fetch(`${API_BASE}/api/jobs/${jobId}/candidates`);
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setCandidates(data.candidates);
@@ -214,11 +219,12 @@ function App() {
     setIsCreatingJob(true);
 
     try {
-      const response = await fetch("/api/jobs", {
+      const response = await fetch(`${API_BASE}/api/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jobForm)
       });
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setJobs((current) => [data.job, ...current]);
@@ -246,10 +252,11 @@ function App() {
       formData.append("phone", candidateForm.phone);
       formData.append("resume", candidateForm.resume);
 
-      const response = await fetch(`/api/jobs/${selectedJob._id}/candidates`, {
+      const response = await fetch(`${API_BASE}/api/jobs/${selectedJob._id}/candidates`, {
         method: "POST",
         body: formData
       });
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setCandidates((current) => [data.candidate, ...current].sort((a, b) => b.score - a.score));
@@ -265,11 +272,12 @@ function App() {
 
   async function updateStatus(candidateId, status) {
     try {
-      const response = await fetch(`/api/candidates/${candidateId}/status`, {
+      const response = await fetch(`${API_BASE}/api/candidates/${candidateId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status })
       });
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setCandidates((current) =>
@@ -283,7 +291,8 @@ function App() {
   async function deleteCandidate(candidateId) {
     if (!window.confirm("Delete this candidate from the shortlist?")) return;
     try {
-      const response = await fetch(`/api/candidates/${candidateId}`, { method: "DELETE" });
+      const response = await fetch(`${API_BASE}/api/candidates/${candidateId}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(`Server error (${response.status})`);
       const data = await response.json();
       if (!data.success) throw new Error(data.message);
       setCandidates((current) => current.filter((c) => c._id !== candidateId));

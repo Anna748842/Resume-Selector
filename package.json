@@ -8,7 +8,9 @@
     "server": "node server/server.js",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "build": "npm --prefix client run build",
-    "deploy": "npm run build && node scripts/deploy-gh-pages.js"
+    "start": "node server/server.js",
+    "deploy": "npm run build && node scripts/deploy-gh-pages.js",
+    "render-build": "npm --prefix client install && npm --prefix client run build && npm --prefix server install"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
@@ -18,4 +20,3 @@
     "firebase": "^12.19.0"
   }
 }
-
